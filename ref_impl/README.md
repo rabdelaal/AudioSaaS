@@ -15,7 +15,7 @@ C:\audiovenv\Scripts\python.exe -m pytest -q
 ```
 
 Files:
-- `ref_impl/core.py` — toy implementations of `initialize_H`, `mobius_map`, `mobius_diffuse`, `decode_to_modality`.
+- `ref_impl/core.py` — toy implementations of `initialize_h`, `mobius_map`, `mobius_diffuse`, `decode_to_modality`.
 - `tests/test_ref_impl.py` — pytest unit tests (happy path + simple edge checks).
 
 Notes:

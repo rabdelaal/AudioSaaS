@@ -1,26 +1,33 @@
 import time
 import requests
 
-VIDEO = 'd:/AudioSaaS/uploads/84de91f22ed4406a814cf91547660382_17aa5283-d71a-4c3b-a7c4-a0de8d009a04.mp4'
-URL = 'http://127.0.0.1:5000/start_pipeline'
+VIDEO = "d:/AudioSaaS/uploads/example_video.mp4"
+URL = "http://127.0.0.1:5000/start_pipeline"
 
-with open(VIDEO, 'rb') as f:
-    files = {'video': ('video.mp4', f, 'video/mp4')}
-    data = {'prompt': 'ocean waves', 'transcript': '', 'foley': 'foleycrafter', 'tts': 'pyttsx3', 'sync': 'timed', 'duration': '5'}
+with open(VIDEO, "rb") as f:
+    files = {"video": ("video.mp4", f, "video/mp4")}
+    data = {
+        "prompt": "ocean waves",
+        "transcript": "",
+        "foley": "foleycrafter",
+        "tts": "pyttsx3",
+        "sync": "timed",
+        "duration": "5",
+    }
     r = requests.post(URL, files=files, data=data)
-    print('start response:', r.status_code, r.text)
+    print("start response:", r.status_code, r.text)
     if r.status_code != 200:
-        raise SystemExit('start failed')
-    job_id = r.json()['job_id']
+        raise SystemExit("start failed")
+    job_id = r.json()["job_id"]
 
-STATUS_URL = f'http://127.0.0.1:5000/job_status/{job_id}'
-for i in range(60):
+STATUS_URL = f"http://127.0.0.1:5000/job_status/{job_id}"
+for _i in range(60):
     r = requests.get(STATUS_URL)
-    print('status', r.status_code, r.text)
+    print("status", r.status_code, r.text)
     if r.status_code != 200:
         break
     j = r.json()
-    if j.get('status') in ('done','error'):
+    if j.get("status") in ("done", "error"):
         break
     time.sleep(2)
-print('final:', r.text)
+print("final:", r.text)

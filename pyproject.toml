@@ -1,6 +1,17 @@
 [tool.ruff]
 line-length = 88
+extend-ignore = ["E203"]
+exclude = ["MMAudio", "bark", "Wav2Lip", "*.ipynb", "tools"]
+
+[tool.ruff.lint]
 select = ["E", "F", "W", "C", "N", "B", "Q"]
+exclude = [
+	"MMAudio",
+	"bark",
+	"Wav2Lip",
+	"*.ipynb",
+	"tools",
+]
 
 [tool.black]
 line-length = 88

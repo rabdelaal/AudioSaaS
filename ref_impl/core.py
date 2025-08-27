@@ -1,73 +1,69 @@
-"""Minimal reference implementation scaffolding for Σ-Möbius (toy prototype).
-This is intentionally tiny and deterministic so it can be used for unit tests and prototypes.
+"""Minimal reference implementation scaffolding for a tiny deterministic toy.
+
+This module is intentionally small and dependency-free so it can be used in
+unit tests and CI without heavy ML dependencies.
 """
 from typing import Tuple
 
 import torch
 
 
-def initialize_H(seed: int, shape: Tuple[int, ...] = (2, 2, 2, 2, 4, 8, 2)) -> torch.Tensor:
-    """Create a deterministic initial Hyper-Möbius tensor for testing.
+def initialize_h(
+    seed: int, shape: Tuple[int, ...] = (2, 2, 2, 2, 4, 8, 2)
+) -> torch.Tensor:
+    """Create a deterministic initial tensor for testing.
 
-    The last dimension encodes a small complex-like vector (real, imag) in this toy impl.
+    The returned tensor values live roughly in [-1, 1].
     """
     torch.manual_seed(seed)
-    return torch.randn(shape, dtype=torch.float32)
+    return (torch.rand(*shape) * 2.0 - 1.0).to(torch.float32)
 
 
 def mobius_map(tau: float) -> torch.Tensor:
-    """Return a small 2x2 contractive matrix (spectral radius < 1).
-
-    This toy map uses simple trigonometric components to vary with `tau`.
-    """
+    """Return a small 2x2 contractive matrix parametrized by `tau`."""
     c = torch.cos(torch.tensor(tau, dtype=torch.float32))
     s = torch.sin(torch.tensor(tau, dtype=torch.float32))
-    # Small rotation + contraction
-    M = torch.tensor([[0.8 * c, -0.2 * s], [0.2 * s, 0.8 * c]], dtype=torch.float32)
-    return M
+    return torch.tensor([[0.8 * c, -0.2 * s], [0.2 * s, 0.8 * c]], dtype=torch.float32)
 
 
-def mobius_transform(q: torch.Tensor, M: torch.Tensor) -> torch.Tensor:
-    """Apply a 2x2 linear transform to last dimension vectors.
+def mobius_transform(q: torch.Tensor, m: torch.Tensor) -> torch.Tensor:
+    """Apply a 2x2 linear transform to vectors stored in the last dimension."""
+    return torch.einsum("...k,kj->...j", q, m)
 
-    q: (..., 2)
-    M: (2,2)
-    Returns: (..., 2)
+
+def mobius_diffuse(h: torch.Tensor, m: torch.Tensor, tau: float) -> torch.Tensor:
+    """Apply a tiny diffusion kernel across the penultimate dimension.
+
+    This toy kernel mixes neighboring slots and applies a tanh nonlinearity.
     """
-    return torch.matmul(q, M.t())
-
-
-def mobius_diffuse(H: torch.Tensor, M: torch.Tensor, tau: float) -> torch.Tensor:
-    """Apply the toy Möbius diffusion kernel to the tensor H.
-
-    This implementation reshapes the tensor to apply the 2x2 transform to the
-    last dimension and a pointwise nonlinearity.
-    """
-    orig_shape = H.shape
-    flat = H.reshape(-1, orig_shape[-1])  # (N, 2)
-    transformed = mobius_transform(flat, M)
-    # simple nonlinearity to emulate diffusion/renormalization
-    sigma = torch.tanh(transformed)
-    out = sigma.reshape(orig_shape)
+    out = h.clone()
+    alpha = torch.tanh(torch.tensor(tau, dtype=torch.float32))
+    # iterate over interior positions and mix neighbors
+    for idx in range(1, h.shape[-2] - 1):
+        left = mobius_transform(h[..., idx - 1, :], m)
+        center = mobius_transform(h[..., idx, :], m)
+        right = mobius_transform(h[..., idx + 1, :], m)
+        out[..., idx, :] = torch.tanh((left + center + right) * (0.33 + 0.1 * alpha))
     return out
 
 
-def decode_to_modality(H: torch.Tensor, modality: str = "audio") -> torch.Tensor:
+def decode_to_modality(h: torch.Tensor, modality: str = "audio") -> torch.Tensor:
     """Decode the tensor to a toy modality output.
 
-    For 'audio' we return a 1-D waveform by mean-reduction and normalization.
+    For audio we collapse spatial dims into a 1-D waveform and normalize to [-1,1].
     """
     if modality != "audio":
-        raise NotImplementedError("Only 'audio' modality is implemented in the reference scaffold.")
-    # mean over all axes except last (the small complex vector), then flatten
-    reduced = H.mean(dim=list(range(H.dim() - 1)))
+        raise NotImplementedError(
+            "Only 'audio' modality is implemented in the reference scaffold."
+        )
+
+    # mean over all axes except the final small vector, then flatten
+    reduced = h.mean(dim=list(range(h.ndim - 1))).squeeze()
     wav = reduced.flatten()
-    # normalize to [-1, 1]
     denom = wav.abs().max().clamp(min=1e-6)
-    wav = (wav / denom).to(torch.float32)
-    return wav
+    return (wav / denom).to(torch.float32)
 
 
-def stable_check(H_prev: torch.Tensor, H_next: torch.Tensor, tol: float = 1e-4) -> bool:
+def stable_check(h_prev: torch.Tensor, h_next: torch.Tensor, tol: float = 1e-4) -> bool:
     """Simple stability check: small change between iterations."""
-    return torch.norm(H_next - H_prev) < tol
+    return torch.norm(h_next - h_prev) < tol
