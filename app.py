@@ -1,6 +1,7 @@
 import os
 import uuid
 import subprocess
+import logging
 import threading
 import sys
 import time
@@ -38,6 +39,15 @@ app = Flask(__name__)
 app.secret_key = "replace-with-a-secure-key"
 app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024  # 1GB max upload
 app.static_folder = os.path.join(BASE_DIR, "static")
+
+# Basic logging for production visibility
+logging.basicConfig(level=logging.INFO)
+app.logger.setLevel(logging.INFO)
+
+
+@app.route("/health")
+def health():
+    return {"status": "ok"}, 200
 
 
 def allowed_file(filename, allowed_set):
