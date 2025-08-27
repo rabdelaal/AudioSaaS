@@ -11,30 +11,36 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-      with:
-        submodules: 'recursive'
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
 
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.11'
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
 
-    - name: Install system deps
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y ffmpeg
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
 
-    - name: Install Python deps
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt || true
-        if [ -f ref_impl/requirements.txt ]; then pip install -r ref_impl/requirements.txt; fi
+      - name: Install Python deps
+        run: |
+          set -euxo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt || true
+          if [ -f ref_impl/requirements.txt ]; then pip install -r ref_impl/requirements.txt; fi
+          # dev tools for linting
+          pip install ruff black || true
 
-    - name: Run tests
-      run: |
-        set -e
-        python -m pytest -q tests/test_ref_impl.py
-        # End-to-end smoke test using the lightweight reference backend
-        python -m pytest -q tests/test_e2e_ref.py
+      - name: Run tests
+        run: |
+          set -euxo pipefail
+          echo 'Running linters: ruff and black (check)'
+          ruff check . || true
+          black --check . || true
+          python -m pytest -q tests/test_ref_impl.py
+          # End-to-end smoke test using the lightweight reference backend
+          python -m pytest -q tests/test_e2e_ref.py
