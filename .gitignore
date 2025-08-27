@@ -3,3 +3,4 @@ uploads/
 __pycache__/
 .venv/
 tools/gh/
+backup_submodules_*/
