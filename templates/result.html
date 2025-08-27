@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Result</title>
+  </head>
+  <body>
+    <h1>Processing complete</h1>
+    <p>Download files:</p>
+    <ul>
+      {% if audio_file %}
+      <li><a href="/uploads/{{ audio_file }}">Download audio</a></li>
+      {% endif %}
+      <li><a href="/uploads/{{ video_file }}">Download video with audio</a></li>
+    </ul>
+
+    <p><a href="/">Process another file</a></p>
+  </body>
+</html>

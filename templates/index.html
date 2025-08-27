@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MMAudio Studio</title>
+    <link rel="stylesheet" href="/static/style.css">
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <h1>MMAudio Studio</h1>
+        <p class="tag">Generate immersive, synchronized audio for your videos powered by MMAudio.</p>
+      </header>
+
+      <main class="card">
+        <section class="upload-grid">
+          <div class="col">
+            <label class="field">
+              <div class="label">Video file</div>
+              <input id="video-input" class="input file-input" type="file" accept="video/*">
+            </label>
+
+            <label class="field">
+              <div class="label">Optional prompt (describe audio)</div>
+              <input id="prompt" class="input" type="text" placeholder="e.g. waves, distant chatter, ambient synth">
+            </label>
+
+            <label class="field small">
+              <div class="label">Duration (sec)</div>
+              <input id="duration" class="input" type="number" value="8" min="1">
+            </label>
+
+            <label class="field small">
+              <div class="label">Model variant</div>
+              <select id="variant" class="input select">
+                <option value="large_44k_v2">large_44k_v2 (best)</option>
+                <option value="medium_44k">medium_44k</option>
+                <option value="small_44k">small_44k</option>
+              </select>
+            </label>
+
+            <div class="actions">
+              <button id="start-btn" class="btn primary">Start MMAudio</button>
+              <button id="merge-btn" class="btn ghost">Quick merge (upload + optional audio)</button>
+            </div>
+            <hr>
+            <div class="pipeline">
+              <label class="field">
+                <div class="label">Pipeline transcript (optional)  provide text to dub</div>
+                <textarea id="transcript" class="input textarea" placeholder="Type or paste dialogue here" rows="4"></textarea>
+              </label>
+              <div style="display:flex;gap:.5rem">
+                <select id="pipeline-foley" class="input select" style="flex:1">
+                  <option value="foleycrafter">FoleyCrafter (recommended)</option>
+                  <option value="video_foley">Video-Foley</option>
+                </select>
+                <select id="pipeline-tts" class="input select" style="flex:1">
+                  <option value="parler">Parler-TTS (expressive)</option>
+                  <option value="bark">Bark (natural)</option>
+                  <option value="pyttsx3">pyttsx3 (local fallback)</option>
+                </select>
+              </div>
+              <div style="display:flex;gap:.5rem;margin-top:.5rem">
+                <select id="pipeline-sync" class="input select" style="flex:1">
+                  <option value="whisperx">WhisperX (dubbing)</option>
+                  <option value="timed">Script-timed</option>
+                </select>
+                <select id="pipeline-backend" class="input select" style="flex:1">
+                  <option value="default">Default (Bark/Parler)</option>
+                  <option value="ref">Reference (fast, local)</option>
+                </select>
+                <button id="start-pipeline" class="btn primary" style="flex:1">Run Practical Pipeline</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="col preview">
+            <div id="player-wrap" class="player-wrap">
+              <video id="video-preview" controls muted></video>
+            </div>
+            <div id="status" class="status">Ready</div>
+            <div id="outputs" class="outputs"></div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="foot">MMAudio Studio — local demo. FFmpeg is required on the server. MMAudio heavy-models require GPU and PyTorch.</footer>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
