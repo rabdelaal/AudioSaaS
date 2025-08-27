@@ -25,3 +25,16 @@ Notes
 - The app uses ffmpeg subprocess calls to extract/generate/merge audio. Ensure ffmpeg is installed.
 - Uploaded files are stored in `uploads/` inside the project folder.
 - This is a minimal example intended for local testing. For production, secure uploads, sanitize filenames more strictly, and run behind a proper web server.
+
+Submodules and CI
+-----------------
+
+This repository uses git submodules to include upstream projects (MMAudio, bark, Wav2Lip). After cloning, initialise submodules with:
+
+```bash
+git submodule update --init --recursive
+```
+
+A GitHub Actions workflow is included at `.github/workflows/ci.yml` which initializes submodules and runs the lightweight reference tests on push.
+
+If you want me to add more tests to CI (end-to-end pipeline smoke test or linting), tell me which tests to include and I will wire them into the workflow.
