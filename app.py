@@ -183,31 +183,19 @@ def _ffprobe_duration(path: str) -> float:
         return 0.0
 
 
-def run_pipeline_job(job_id: str, video_path: str, options: dict):  # noqa: C901
-    """Run a practical pipeline: Foley/Ambience + TTS + Sync.
-
-    This runner will first check for recommended packages. If missing, it will set an
-    actionable error asking the user to install them. If not present, it falls back to
-    lightweight, ffmpeg-based ambient/foley generation and optional pyttsx3 TTS.
+def check_requirements(tts_engine: str, sync_method: str):
+    """Check optional dependencies and return a tuple:
+    (missing: List[str], bark_ok: bool, parler_ok: bool, pyttsx3_ok: bool)
     """
-    JOBS[job_id]["status"] = "running"
-    JOBS[job_id]["started_at"] = time.time()
-
-    # desired components
-    tts_engine = options.get("tts", "parler")
-    sync_method = options.get("sync", "whisperx")
-    transcript = options.get("transcript") or ""
-    backend = options.get("backend") or ""
-
     missing: List[str] = []
-    # check whisperx
     try:
         importlib.import_module("whisperx")
+        whisperx_ok = True
     except Exception:
-        if sync_method == "whisperx":
-            missing.append("whisperx")
+        whisperx_ok = False
+    if sync_method == "whisperx" and not whisperx_ok:
+        missing.append("whisperx")
 
-    # check bark/parler or pyttsx3 fallback
     bark_ok = True
     parler_ok = True
     pyttsx3_ok = True
@@ -224,8 +212,6 @@ def run_pipeline_job(job_id: str, video_path: str, options: dict):  # noqa: C901
     except Exception:
         pyttsx3_ok = False
 
-    # If the TTS choice isn't available, and pyttsx3 is also missing,
-    # ask the user to install required packages
     if tts_engine == "bark" and not bark_ok:
         missing.append("bark")
     if tts_engine == "parler" and not parler_ok:
@@ -233,28 +219,82 @@ def run_pipeline_job(job_id: str, video_path: str, options: dict):  # noqa: C901
     if tts_engine in ("bark", "parler") and not (bark_ok or parler_ok or pyttsx3_ok):
         missing.append("pyttsx3 (fallback)")
 
+    return missing, bark_ok, parler_ok, pyttsx3_ok
+
+
+def determine_duration(video_path: str, options: dict) -> float:
+    """Return duration in seconds, using ffprobe fallback to options."""
+    duration = _ffprobe_duration(video_path)
+    if duration <= 0:
+        return float(options.get("duration") or 8.0)
+    return duration
+
+
+def build_amix_cmd(mix_inputs: list, final_audio: str) -> list:
+    """Construct an ffmpeg amix command list for the given inputs."""
+    inputs = []
+    for _, path in mix_inputs:
+        inputs += ["-i", path]
+    cmd = (
+        ["ffmpeg", "-y"]
+        + inputs
+        + [
+            "-filter_complex",
+            f"amix=inputs={len(mix_inputs)}:normalize=1",
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            final_audio,
+        ]
+    )
+    return cmd
+
+
+def find_wav2lip_checkpoint(wav2lip_dir: str):
+    """Return first existing wav2lip checkpoint path or None."""
+    checkpoint_paths = [
+        os.path.join(wav2lip_dir, "checkpoints", "wav2lip_gan.pth"),
+        os.path.join(wav2lip_dir, "checkpoints", "wav2lip.pth"),
+    ]
+    for p in checkpoint_paths:
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+def run_pipeline_job(job_id: str, video_path: str, options: dict):  # noqa: C901
+    """Run a practical pipeline: Foley/Ambience + TTS + Sync.
+
+    Refactored to call helper functions for smaller testable units.
+    """
+    JOBS[job_id]["status"] = "running"
+    JOBS[job_id]["started_at"] = time.time()
+
+    tts_engine = options.get("tts", "parler")
+    sync_method = options.get("sync", "whisperx")
+    transcript = options.get("transcript") or ""
+    backend = options.get("backend") or ""
+
+    missing, bark_ok, parler_ok, pyttsx3_ok = (
+        check_requirements(tts_engine, sync_method)
+    )
     if missing:
         JOBS[job_id]["status"] = "error"
         JOBS[job_id]["error"] = (
             "Missing required packages: " + ", ".join(missing) + "."
-            + " Install them and retry. Example: pip install whisperx pyttsx3. "
-            + "See Bark and Parler-TTS repos for their install instructions."
+            + " Install them and retry. Example: pip install whisperx pyttsx3."
         )
         return
 
-    # If user requested the minimal reference backend, ensure it's available
     if backend == "ref" and not REF_IMPL_OK:
         JOBS[job_id]["status"] = "error"
         JOBS[job_id]["error"] = (
-            "Reference backend (ref_impl) not available. "
-            "Ensure ref_impl package is included in the repository."
+            "Reference backend (ref_impl) not available. Ensure ref_impl is included."
         )
         return
 
-    # determine duration
-    duration = _ffprobe_duration(video_path)
-    if duration <= 0:
-        duration = float(options.get("duration") or 8.0)
+    duration = determine_duration(video_path, options)
 
     # Step 1: extract existing audio if present
     extracted_audio = None
@@ -274,7 +314,6 @@ def run_pipeline_job(job_id: str, video_path: str, options: dict):  # noqa: C901
                 ]
             )
         except RuntimeError:
-            # re-encode fallback
             run_ffmpeg(
                 [
                     "ffmpeg",
@@ -293,7 +332,6 @@ def run_pipeline_job(job_id: str, video_path: str, options: dict):  # noqa: C901
     # Step 2: Foley/Ambience generation (fallback: ffmpeg noise)
     foley_path = os.path.join(UPLOAD_DIR, f"{job_id}_foley.wav")
     try:
-        # use ffmpeg anoisesrc for ambience
         run_ffmpeg(
             [
                 "ffmpeg",
@@ -316,15 +354,12 @@ def run_pipeline_job(job_id: str, video_path: str, options: dict):  # noqa: C901
 
     # Step 3: TTS generation
     tts_path = None
-    # If the selected backend is the lightweight reference impl, generate audio from it
     if backend == "ref":
         JOBS[job_id]["progress_msg"] = "Generating audio with reference backend..."
         try:
-            # deterministic seed from job id
             seed = int(job_id[:8], 16)
             h = ref_core.initialize_h(seed)
             m = ref_core.mobius_map(0.5)
-            # iterate until stable or max iterations
             max_it = 64
             prev = h
             cur = None
@@ -335,13 +370,11 @@ def run_pipeline_job(job_id: str, video_path: str, options: dict):  # noqa: C901
                 prev = cur
 
             wav = ref_core.decode_to_modality(cur, "audio")
-            # save wav as 22050 Hz mono PCM16
             import wave
             import numpy as _np
 
             tts_path = os.path.join(UPLOAD_DIR, f"{job_id}_ref.wav")
             arr = wav.detach().cpu().numpy().astype("float32")
-            # ensure within [-1,1]
             arr = arr / max(1e-6, abs(arr).max())
             data = (_np.clip(arr, -1, 1) * 32767).astype(_np.int16)
             with wave.open(tts_path, "wb") as wf:
@@ -354,46 +387,32 @@ def run_pipeline_job(job_id: str, video_path: str, options: dict):  # noqa: C901
             JOBS[job_id]["error"] = f"Reference backend generation failed: {e}"
             return
     else:
-        # existing transcript-based TTS code follows
         if transcript:
-            tts_path = os.path.join(UPLOAD_DIR, f"{job_id}_tts.wav")
             # prefer Bark if available
             if bark_ok:
                 try:
                     bark_api = importlib.import_module("bark.api")
                     bark_gen = importlib.import_module("bark.generation")
-                    # generate audio array and save using scipy
                     audio_arr = bark_api.generate_audio(transcript)
                     try:
                         from scipy.io.wavfile import write as write_wav
 
-                        write_wav(
-                            tts_path,
-                            bark_gen.SAMPLE_RATE,
-                            (
-                                audio_arr.astype("int16")
-                                if audio_arr.dtype != "int16"
-                                else audio_arr
-                            ),
-                        )
+                        write_wav(tts_path, bark_gen.SAMPLE_RATE, audio_arr)
                     except Exception:
-                        # fallback: use numpy and wave
                         import wave
                         import numpy as _np
 
                         data = (_np.clip(audio_arr, -1, 1) * 32767).astype(_np.int16)
-                        wf = wave.open(tts_path, "wb")
-                        wf.setnchannels(1)
-                        wf.setsampwidth(2)
-                        wf.setframerate(bark_gen.SAMPLE_RATE)
-                        wf.writeframes(data.tobytes())
-                        wf.close()
+                        with wave.open(tts_path, "wb") as wf:
+                            wf.setnchannels(1)
+                            wf.setsampwidth(2)
+                            wf.setframerate(bark_gen.SAMPLE_RATE)
+                            wf.writeframes(data.tobytes())
                 except Exception as e:
                     JOBS[job_id]["status"] = "error"
                     JOBS[job_id]["error"] = f"Bark TTS failed: {e}"
                     return
             elif pyttsx3_ok and not (bark_ok or parler_ok):
-                # simple offline TTS fallback
                 import pyttsx3
 
                 engine = pyttsx3.init()
@@ -401,49 +420,36 @@ def run_pipeline_job(job_id: str, video_path: str, options: dict):  # noqa: C901
                 engine.save_to_file(transcript, tts_path)
                 engine.runAndWait()
             else:
-                # parler not implemented here
                 JOBS[job_id]["status"] = "error"
                 JOBS[job_id]["error"] = "No available TTS engine (bark/parler/pyttsx3)."
                 return
+
     if transcript:
         tts_path = os.path.join(UPLOAD_DIR, f"{job_id}_tts.wav")
-        # prefer Bark if available
         if bark_ok:
             try:
                 bark_api = importlib.import_module("bark.api")
                 bark_gen = importlib.import_module("bark.generation")
-                # generate audio array and save using scipy
                 audio_arr = bark_api.generate_audio(transcript)
                 try:
                     from scipy.io.wavfile import write as write_wav
 
-                    write_wav(
-                        tts_path,
-                        bark_gen.SAMPLE_RATE,
-                        (
-                            audio_arr.astype("int16")
-                            if audio_arr.dtype != "int16"
-                            else audio_arr
-                        ),
-                    )
+                    write_wav(tts_path, bark_gen.SAMPLE_RATE, audio_arr)
                 except Exception:
-                    # fallback: use numpy and wave
                     import wave
                     import numpy as _np
 
                     data = (_np.clip(audio_arr, -1, 1) * 32767).astype(_np.int16)
-                    wf = wave.open(tts_path, "wb")
-                    wf.setnchannels(1)
-                    wf.setsampwidth(2)
-                    wf.setframerate(bark_gen.SAMPLE_RATE)
-                    wf.writeframes(data.tobytes())
-                    wf.close()
+                    with wave.open(tts_path, "wb") as wf:
+                        wf.setnchannels(1)
+                        wf.setsampwidth(2)
+                        wf.setframerate(bark_gen.SAMPLE_RATE)
+                        wf.writeframes(data.tobytes())
             except Exception as e:
                 JOBS[job_id]["status"] = "error"
                 JOBS[job_id]["error"] = f"Bark TTS failed: {e}"
                 return
         elif pyttsx3_ok and not (bark_ok or parler_ok):
-            # simple offline TTS fallback
             import pyttsx3
 
             engine = pyttsx3.init()
@@ -451,7 +457,6 @@ def run_pipeline_job(job_id: str, video_path: str, options: dict):  # noqa: C901
             engine.save_to_file(transcript, tts_path)
             engine.runAndWait()
         else:
-            # parler not implemented here
             JOBS[job_id]["status"] = "error"
             JOBS[job_id]["error"] = "No available TTS engine (bark/parler/pyttsx3)."
             return
@@ -467,23 +472,7 @@ def run_pipeline_job(job_id: str, video_path: str, options: dict):  # noqa: C901
 
     final_audio = os.path.join(UPLOAD_DIR, f"{job_id}_final.wav")
     try:
-        # simple mix: use amix to average
-        inputs = []
-        for m in mix_inputs:
-            inputs += ["-i", m[1]]
-        amix_cmd = (
-            ["ffmpeg", "-y"]
-            + inputs
-            + [
-                "-filter_complex",
-                f"amix=inputs={len(mix_inputs)}:normalize=1",
-                "-ar",
-                "44100",
-                "-ac",
-                "2",
-                final_audio,
-            ]
-        )
+        amix_cmd = build_amix_cmd(mix_inputs, final_audio)
         run_ffmpeg(amix_cmd)
     except Exception as e:
         JOBS[job_id]["status"] = "error"
@@ -516,15 +505,7 @@ def run_pipeline_job(job_id: str, video_path: str, options: dict):  # noqa: C901
 
     # Optional: attempt Wav2Lip lip-sync if repo and checkpoint are available
     wav2lip_dir = os.path.join(BASE_DIR, "Wav2Lip")
-    checkpoint_paths = [
-        os.path.join(wav2lip_dir, "checkpoints", "wav2lip_gan.pth"),
-        os.path.join(wav2lip_dir, "checkpoints", "wav2lip.pth"),
-    ]
-    available_ckpt = None
-    for p in checkpoint_paths:
-        if os.path.isfile(p):
-            available_ckpt = p
-            break
+    available_ckpt = find_wav2lip_checkpoint(wav2lip_dir)
 
     if available_ckpt and os.path.isdir(wav2lip_dir):
         JOBS[job_id]["progress_msg"] = "Running Wav2Lip lip-sync..."
@@ -547,7 +528,6 @@ def run_pipeline_job(job_id: str, video_path: str, options: dict):  # noqa: C901
                 JOBS[job_id]["progress_msg"] = "Wav2Lip failed"
                 JOBS[job_id]["error"] = proc.stderr.decode("utf8", errors="ignore")
             else:
-                # replace out_video with lipsync_out as the primary output
                 JOBS[job_id]["outputs"] = [
                     os.path.basename(final_audio),
                     os.path.basename(lipsync_out),
@@ -559,12 +539,10 @@ def run_pipeline_job(job_id: str, video_path: str, options: dict):  # noqa: C901
             JOBS[job_id]["error"] = str(e)
             return
     else:
-        # Inform user how to get checkpoint if absent
         if os.path.isdir(wav2lip_dir):
             JOBS[job_id]["progress_msg"] = (
                 "Wav2Lip checkpoint missing. Download the checkpoint "
-                "(wav2lip_gan.pth or wav2lip.pth) and place it in "
-                "Wav2Lip/checkpoints/"
+                "(wav2lip_gan.pth or wav2lip.pth) and place it in Wav2Lip/checkpoints/"
             )
 
     JOBS[job_id]["status"] = "done"
