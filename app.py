@@ -263,6 +263,84 @@ def find_wav2lip_checkpoint(wav2lip_dir: str):
     return None
 
 
+def build_extract_copy_cmd(video_path: str, extracted_audio: str) -> list:
+    """Return ffmpeg command list to copy audio stream from video."""
+    return ["ffmpeg", "-y", "-i", video_path, "-vn", "-acodec", "copy", extracted_audio]
+
+
+def build_extract_reencode_cmd(video_path: str, extracted_audio: str) -> list:
+    """Return ffmpeg command list to re-encode audio if copy fails."""
+    return [
+        "ffmpeg",
+        "-y",
+        "-i",
+        video_path,
+        "-vn",
+        "-ac",
+        "2",
+        "-ar",
+        "44100",
+        extracted_audio,
+    ]
+
+
+def build_foley_cmd(duration: float, foley_path: str) -> list:
+    """Return ffmpeg command list to generate ambience using anoisesrc."""
+    return [
+        "ffmpeg",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"anoisesrc=color=pink:duration={duration}",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        foley_path,
+    ]
+
+
+def build_merge_cmd(video_path: str, audio_path: str, out_video: str) -> list:
+    """Return ffmpeg command list to merge audio into video with aac encoding."""
+    return [
+        "ffmpeg",
+        "-y",
+        "-i",
+        video_path,
+        "-i",
+        audio_path,
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-shortest",
+        out_video,
+    ]
+
+
+def build_wav2lip_cmd(
+    wav2lip_dir: str,
+    ckpt: str,
+    video_path: str,
+    final_audio: str,
+    lipsync_out: str,
+) -> list:
+    """Return the command list to run Wav2Lip inference script."""
+    return [
+        sys.executable,
+        os.path.join(wav2lip_dir, "inference.py"),
+        "--checkpoint_path",
+        ckpt,
+        "--face",
+        video_path,
+        "--audio",
+        final_audio,
+        "--outfile",
+        lipsync_out,
+    ]
+
+
 def run_pipeline_job(job_id: str, video_path: str, options: dict):  # noqa: C901
     """Run a practical pipeline: Foley/Ambience + TTS + Sync.
 
@@ -301,52 +379,14 @@ def run_pipeline_job(job_id: str, video_path: str, options: dict):  # noqa: C901
     if has_audio_stream(video_path):
         extracted_audio = os.path.join(UPLOAD_DIR, f"{job_id}_extracted.m4a")
         try:
-            run_ffmpeg(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-i",
-                    video_path,
-                    "-vn",
-                    "-acodec",
-                    "copy",
-                    extracted_audio,
-                ]
-            )
+            run_ffmpeg(build_extract_copy_cmd(video_path, extracted_audio))
         except RuntimeError:
-            run_ffmpeg(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-i",
-                    video_path,
-                    "-vn",
-                    "-ac",
-                    "2",
-                    "-ar",
-                    "44100",
-                    extracted_audio,
-                ]
-            )
+            run_ffmpeg(build_extract_reencode_cmd(video_path, extracted_audio))
 
     # Step 2: Foley/Ambience generation (fallback: ffmpeg noise)
     foley_path = os.path.join(UPLOAD_DIR, f"{job_id}_foley.wav")
     try:
-        run_ffmpeg(
-            [
-                "ffmpeg",
-                "-y",
-                "-f",
-                "lavfi",
-                "-i",
-                f"anoisesrc=color=pink:duration={duration}",
-                "-ar",
-                "44100",
-                "-ac",
-                "2",
-                foley_path,
-            ]
-        )
+        run_ffmpeg(build_foley_cmd(duration, foley_path))
     except Exception as e:
         JOBS[job_id]["status"] = "error"
         JOBS[job_id]["error"] = f"Failed to generate ambience: {e}"
@@ -482,22 +522,7 @@ def run_pipeline_job(job_id: str, video_path: str, options: dict):  # noqa: C901
     # Step 5: Merge into video
     out_video = os.path.join(UPLOAD_DIR, f"{job_id}_with_pipeline.mp4")
     try:
-        run_ffmpeg(
-            [
-                "ffmpeg",
-                "-y",
-                "-i",
-                video_path,
-                "-i",
-                final_audio,
-                "-c:v",
-                "copy",
-                "-c:a",
-                "aac",
-                "-shortest",
-                out_video,
-            ]
-        )
+        run_ffmpeg(build_merge_cmd(video_path, final_audio, out_video))
     except Exception as e:
         JOBS[job_id]["status"] = "error"
         JOBS[job_id]["error"] = f"Failed to merge final audio: {e}"
@@ -510,18 +535,9 @@ def run_pipeline_job(job_id: str, video_path: str, options: dict):  # noqa: C901
     if available_ckpt and os.path.isdir(wav2lip_dir):
         JOBS[job_id]["progress_msg"] = "Running Wav2Lip lip-sync..."
         lipsync_out = os.path.join(UPLOAD_DIR, f"{job_id}_wav2lip.mp4")
-        cmd = [
-            sys.executable,
-            os.path.join(wav2lip_dir, "inference.py"),
-            "--checkpoint_path",
-            available_ckpt,
-            "--face",
-            video_path,
-            "--audio",
-            final_audio,
-            "--outfile",
-            lipsync_out,
-        ]
+        cmd = build_wav2lip_cmd(
+            wav2lip_dir, available_ckpt, video_path, final_audio, lipsync_out
+        )
         try:
             proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             if proc.returncode != 0:

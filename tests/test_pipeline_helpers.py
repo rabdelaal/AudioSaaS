@@ -5,6 +5,11 @@ from app import (
     check_requirements,
     determine_duration,
     find_wav2lip_checkpoint,
+    build_extract_copy_cmd,
+    build_extract_reencode_cmd,
+    build_foley_cmd,
+    build_merge_cmd,
+    build_wav2lip_cmd,
 )
 
 
@@ -48,3 +53,24 @@ def test_determine_duration_tmp_file(tmp_path):
     f.write_bytes(b"\0")
     dur = determine_duration(str(f), {"duration": "3"})
     assert isinstance(dur, float)
+
+
+def test_build_extract_cmds():
+    a = build_extract_copy_cmd("in.mp4", "out.m4a")
+    assert isinstance(a, list)
+    assert "-acodec" in a
+    b = build_extract_reencode_cmd("in.mp4", "out.m4a")
+    assert isinstance(b, list)
+    assert "-ar" in b
+
+
+def test_build_foley_and_merge_and_wav2lip(tmp_path):
+    foley = str(tmp_path / "f.wav")
+    cmd = build_foley_cmd(3.0, foley)
+    assert isinstance(cmd, list)
+    assert "anoisesrc" in " ".join(cmd)
+    outv = str(tmp_path / "out.mp4")
+    merge = build_merge_cmd("in.mp4", "a.wav", outv)
+    assert outv in merge
+    wav2 = build_wav2lip_cmd("Wav2Lip", "ckpt.pth", "v.mp4", "a.wav", "o.mp4")
+    assert "inference.py" in " ".join(wav2)
